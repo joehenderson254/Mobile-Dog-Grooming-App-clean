@@ -1,0 +1,24 @@
+// backend/server.js
+const express = require('express');
+const dotenv = require('dotenv');
+dotenv.config();
+
+const app = express();
+
+// 🔔 Mount the Stripe webhook BEFORE JSON parsers
+const stripeWebhookRouter = require('./stripeWebhook'); // you'll export a router from that file
+app.use('/stripe/webhook', stripeWebhookRouter);
+
+// Normal parsers for everything else
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Mount your other routers (see section B to export them correctly)
+app.use('/bookings', require('./create booking and paymentIntent'));       // POST /
+app.use('/bookings', require('./groomer accept(capture payment)'));        // PATCH /:id/status
+app.use('/',        require('./search nearby groomers'));                  // GET /groomers?lat=...&lng=...
+
+app.get('/', (req, res) => res.json({ ok: true }));
+
+const port = process.env.PORT || 4000;
+app.listen(port, () => console.log(`API listening on :${port}`));

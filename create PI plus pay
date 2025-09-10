@@ -1,0 +1,13 @@
+// BookingScreen.tsx (simplified)
+import { useStripe } from '@stripe/stripe-react-native';
+...
+const { confirmPayment } = useStripe();
+
+async function book() {
+  const res = await fetch(`${API}/bookings`, { method:'POST', headers, body: JSON.stringify(payload) });
+  const { clientSecret } = await res.json();
+  const { error } = await confirmPayment(clientSecret, { paymentMethodType: 'Card' });
+  if (!error) {
+    // show success, wait for groomer accept → push notif
+  }
+}

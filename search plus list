@@ -1,0 +1,36 @@
+// SearchScreen.tsx
+import React, { useState, useEffect } from 'react';
+import { View, TextInput, FlatList, Text, TouchableOpacity } from 'react-native';
+
+export default function SearchScreen({ navigation }) {
+  const [zip, setZip] = useState('');
+  const [results, setResults] = useState([]);
+
+  async function search() {
+    // You’d geocode ZIP → lat/lng client-side or server-side
+    const latlng = await geocodeZip(zip); // your helper
+    const res = await fetch(`${API}/groomers?lat=${latlng.lat}&lng=${latlng.lng}&radiusKm=25`);
+    setResults(await res.json());
+  }
+
+  return (
+    <View style={{ padding: 16 }}>
+      <TextInput placeholder="Enter ZIP code" value={zip} onChangeText={setZip}
+                 style={{ borderWidth:1, borderRadius:8, padding:12 }} />
+      <TouchableOpacity onPress={search} style={{ marginTop:12, padding:14, borderRadius:10, alignItems:'center', borderWidth:1 }}>
+        <Text>Find Mobile Groomers</Text>
+      </TouchableOpacity>
+      <FlatList
+        style={{ marginTop:16 }}
+        data={results}
+        keyExtractor={(g) => g.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity onPress={() => navigation.navigate('Groomer', { id: item.id })} style={{ padding:14, borderWidth:1, borderRadius:10, marginBottom:12 }}>
+            <Text style={{ fontSize:16, fontWeight:'600' }}>{item.name}</Text>
+            <Text>{Math.round(item.distance_km)} km away • From ${(item.min_price_cents/100).toFixed(0)}</Text>
+          </TouchableOpacity>
+        )}
+      />
+    </View>
+  );
+}

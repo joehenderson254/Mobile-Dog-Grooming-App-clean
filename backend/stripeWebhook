@@ -1,0 +1,86 @@
+// backend/src/routes/stripeWebhook.js
+// Stripe webhook route (raw body) to keep Booking.status in sync with Stripe events.
+//
+// REQUIREMENTS
+// - .env must include: STRIPE_WEBHOOK_SECRET=whsec_...
+// - In server.js: mount this router *before* express.json()
+//     const stripeWebhookRouter = require('./routes/stripeWebhook');
+//     app.use('/stripe/webhook', stripeWebhookRouter); // BEFORE app.use(express.json())
+// - Prisma Booking has fields: status (enum) and stripePaymentIntentId (unique)
+
+const express = require('express');
+const stripe = require('./src/lib/stripe');
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = new PrismaClient();
+const router = express.Router();
+
+// IMPORTANT: use express.raw on THIS route so Stripe signature verification works
+router.post('/', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body, // raw buffer (because express.raw)
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error('[stripeWebhook] Signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    switch (event.type) {
+      // When you manually capture and the charge settles, Stripe emits succeeded
+      case 'payment_intent.succeeded': {
+        const pi = event.data.object; // PaymentIntent
+        await prisma.booking.updateMany({
+          where: { stripePaymentIntentId: pi.id },
+          data: { status: 'completed' },
+        });
+        break;
+      }
+
+      // If a PaymentIntent is canceled (e.g., you decline or it times out)
+      case 'payment_intent.canceled': {
+        const pi = event.data.object;
+        await prisma.booking.updateMany({
+          where: { stripePaymentIntentId: pi.id },
+          data: { status: 'canceled' },
+        });
+        break;
+      }
+
+      // If confirmation/capture fails for any reason
+      case 'payment_intent.payment_failed': {
+        const pi = event.data.object;
+        await prisma.booking.updateMany({
+          where: { stripePaymentIntentId: pi.id },
+          data: { status: 'declined' },
+        });
+        break;
+      }
+
+      // Optional: keep around for easy health checks during development
+      case 'ping': {
+        break;
+      }
+
+      default:
+        // No-op for events we don't care about in this MVP
+        // console.log(`[stripeWebhook] Unhandled event: ${event.type}`);
+        break;
+    }
+
+    // Always acknowledge receipt quickly (Stripe expects a 2xx)
+    res.json({ received: true });
+  } catch (err) {
+    // Avoid throwing non-2xx unless something truly failed on our side
+    console.error('[stripeWebhook] Handler error:', err);
+    res.status(500).json({ error: 'webhook handler failed' });
+  }
+});
+
+module.exports = router;

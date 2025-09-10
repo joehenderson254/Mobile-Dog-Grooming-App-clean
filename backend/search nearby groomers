@@ -1,0 +1,45 @@
+const express = require('express');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+const router = express.Router();
+
+// simple haversine (km)
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+router.get('/groomers', async (req, res) => {
+  try {
+    const { lat, lng, radiusKm = 25 } = req.query;
+    const baseLat = Number(lat), baseLng = Number(lng), radius = Number(radiusKm);
+    if (Number.isNaN(baseLat) || Number.isNaN(baseLng)) {
+      return res.status(400).json({ error: 'lat and lng are required numbers' });
+    }
+
+    // pull groomers and compute distances in JS
+    const groomers = await prisma.groomer.findMany();
+
+    const withDistance = groomers
+      .map(g => ({
+        ...g,
+        distance_km: haversine(baseLat, baseLng, g.homeLat, g.homeLng),
+      }))
+      .filter(g => g.distance_km <= radius)
+      .sort((a, b) => a.distance_km - b.distance_km);
+
+    res.json(withDistance);
+  } catch (e) {
+    console.error('[GET /groomers] error', e);
+    res.status(500).json({ error: 'failed to load groomers' });
+  }
+});
+
+module.exports = router;
+

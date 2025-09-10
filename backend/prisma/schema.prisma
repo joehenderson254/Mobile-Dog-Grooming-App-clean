@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  role      String
+  name      String
+  email     String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  Groomer   Groomer?
+}
+
+model Groomer {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id])
+  bio             String?
+  serviceRadiusKm Int       @default(20)
+  homeLat         Float
+  homeLng         Float
+  Services        Service[]
+}
+
+model Service {
+  id          String  @id @default(cuid())
+  groomerId   String
+  groomer     Groomer @relation(fields: [groomerId], references: [id])
+  name        String
+  description String?
+  dogSize     String
+  priceCents  Int
+  durationMin Int
+  active      Boolean @default(true)
+}
+
+model Booking {
+  id                     String   @id @default(cuid())
+  customerId             String
+  groomerId              String
+  serviceId              String
+  startTs                DateTime
+  endTs                  DateTime
+  address                String
+  lat                    Float
+  lng                    Float
+  status                 String   @default("pending")
+  priceCents             Int
+  stripePaymentIntentId  String?
+  createdAt              DateTime @default(now())
+}

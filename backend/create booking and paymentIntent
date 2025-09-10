@@ -1,0 +1,60 @@
+// backend/create booking and paymentIntent
+const express = require('express');
+const { PrismaClient } = require('@prisma/client');
+const stripe = require('./src/lib/stripe');
+const prisma = new PrismaClient();
+
+const router = express.Router();
+
+// POST /bookings  (create booking + PaymentIntent; client will confirm)
+router.post('/', async (req, res) => {
+  try {
+    const { customerId, groomerId, serviceId, startTs, address, lat, lng } = req.body;
+
+    const service = await prisma.service.findUnique({ where: { id: serviceId } });
+    if (!service) return res.status(400).json({ error: 'Service not found' });
+
+    const start = new Date(startTs);
+    const end = new Date(start.getTime() + service.durationMin * 60 * 1000);
+
+    // 1) Create booking first (so we can use booking.id in PI metadata)
+    const booking = await prisma.booking.create({
+      data: {
+        customerId,
+        groomerId,
+        serviceId,
+        startTs: start,
+        endTs: end,
+        address,
+        lat,
+        lng,
+        status: 'pending',
+        priceCents: service.priceCents,
+        stripePaymentIntentId: 'temp',
+      },
+    });
+
+    // 2) Create PaymentIntent (manual capture; client confirms later)
+    const pi = await stripe.paymentIntents.create({
+      amount: service.priceCents,
+      currency: 'usd',
+      capture_method: 'manual',
+      automatic_payment_methods: { enabled: true },
+      metadata: { bookingId: booking.id, groomerId, serviceId },
+    });
+
+    // 3) Store PI id on booking
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { stripePaymentIntentId: pi.id },
+    });
+
+    res.json({ bookingId: booking.id, clientSecret: pi.client_secret });
+  } catch (e) {
+    console.error('[POST /bookings] error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+module.exports = router;
+
