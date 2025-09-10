@@ -1,7 +1,10 @@
+// backend/search nearby groomers
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const router = express.Router();
+
+/* ---------- helpers ---------- */
 
 // simple haversine (km)
 function haversine(lat1, lon1, lat2, lon2) {
@@ -15,6 +18,18 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function addMinutes(date, mins) {
+  return new Date(date.getTime() + mins * 60 * 1000);
+}
+
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  // true if [aStart,aEnd) intersects [bStart,bEnd)
+  return aStart < bEnd && bStart < aEnd;
+}
+
+/* ---------- routes ---------- */
+
+// GET /groomers?lat=&lng=&radiusKm=
 router.get('/groomers', async (req, res) => {
   try {
     const { lat, lng, radiusKm = 25 } = req.query;
@@ -38,6 +53,72 @@ router.get('/groomers', async (req, res) => {
   } catch (e) {
     console.error('[GET /groomers] error', e);
     res.status(500).json({ error: 'failed to load groomers' });
+  }
+});
+
+// GET /groomers/:id/slots?date=YYYY-MM-DD&serviceId=...
+// Returns 30-min slots between 09:00–17:00 (UTC) that don't overlap existing bookings.
+// Uses the service duration and a 15-min buffer around existing bookings.
+router.get('/groomers/:id/slots', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date, serviceId } = req.query;
+
+    if (!date || !serviceId) {
+      return res.status(400).json({ error: 'date (YYYY-MM-DD) and serviceId are required' });
+    }
+
+    // verify service and get duration
+    const service = await prisma.service.findUnique({ where: { id: String(serviceId) } });
+    if (!service) return res.status(400).json({ error: 'Service not found' });
+
+    // build a work window in UTC (09:00–17:00)
+    // (If you prefer local time, we can switch—UTC is deterministic for now.)
+    const [y, m, d] = String(date).split('-').map(Number);
+    if (!y || !m || !d) return res.status(400).json({ error: 'invalid date' });
+
+    const workStart = new Date(Date.UTC(y, m - 1, d, 9, 0, 0, 0));
+    const workEnd   = new Date(Date.UTC(y, m - 1, d, 17, 0, 0, 0));
+    const stepMin = 30;
+    const bufferMin = 15;
+    const durMin = service.durationMin;
+
+    // fetch bookings for this groomer that overlap the work window
+    const bookings = await prisma.booking.findMany({
+      where: {
+        groomerId: String(id),
+        status: { in: ['pending', 'accepted', 'completed'] }, // blocks these
+        AND: [
+          { startTs: { lt: workEnd } },
+          { endTs:   { gt: workStart } }
+        ]
+      },
+      select: { startTs: true, endTs: true },
+      orderBy: { startTs: 'asc' }
+    });
+
+    const slots = [];
+    for (let t = new Date(workStart); t < workEnd; t = addMinutes(t, stepMin)) {
+      const slotStart = t;
+      const slotEnd = addMinutes(slotStart, durMin);
+
+      // must finish within working hours
+      if (slotEnd > workEnd) break;
+
+      // ensure no overlap with bookings (with buffer)
+      const ok = bookings.every(b => {
+        const bStart = addMinutes(new Date(b.startTs), -bufferMin);
+        const bEnd   = addMinutes(new Date(b.endTs), bufferMin);
+        return !overlaps(slotStart, slotEnd, bStart, bEnd);
+      });
+
+      if (ok) slots.push({ startTs: slotStart.toISOString() });
+    }
+
+    res.json({ slots });
+  } catch (e) {
+    console.error('[GET /groomers/:id/slots] error', e);
+    res.status(500).json({ error: 'failed to compute slots' });
   }
 });
 
