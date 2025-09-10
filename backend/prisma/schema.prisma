@@ -7,6 +7,21 @@ datasource db {
   url      = "file:./dev.db"
 }
 
+/**
+ * ---------- Enums ----------
+ */
+enum BookingStatus {
+  pending
+  accepted
+  declined
+  canceled
+  completed
+}
+
+/**
+ * ---------- Models ----------
+ */
+
 model User {
   id        String   @id @default(cuid())
   role      String
@@ -14,18 +29,22 @@ model User {
   email     String   @unique
   phone     String?
   createdAt DateTime @default(now())
-  Groomer   Groomer?
+
+  Groomer Groomer?
 }
 
 model Groomer {
-  id              String    @id @default(cuid())
-  userId          String    @unique
-  user            User      @relation(fields: [userId], references: [id])
+  id              String  @id @default(cuid())
+  userId          String  @unique
+  user            User    @relation(fields: [userId], references: [id])
   bio             String?
-  serviceRadiusKm Int       @default(20)
+  serviceRadiusKm Int     @default(20)
   homeLat         Float
   homeLng         Float
-  Services        Service[]
+  // prepare for Stripe Connect payouts later
+  stripeAccountId String? @unique
+
+  Services Service[]
 }
 
 model Service {
@@ -41,17 +60,20 @@ model Service {
 }
 
 model Booking {
-  id                     String   @id @default(cuid())
-  customerId             String
-  groomerId              String
-  serviceId              String
-  startTs                DateTime
-  endTs                  DateTime
-  address                String
-  lat                    Float
-  lng                    Float
-  status                 String   @default("pending")
-  priceCents             Int
-  stripePaymentIntentId  String?
-  createdAt              DateTime @default(now())
+  id                    String        @id @default(cuid())
+  customerId            String
+  groomerId             String
+  serviceId             String
+  startTs               DateTime
+  endTs                 DateTime
+  address               String
+  lat                   Float
+  lng                   Float
+  priceCents            Int
+  status                BookingStatus @default(pending)
+  // make PI id unique so webhook can use `update({ where: { stripePaymentIntentId } })`
+  stripePaymentIntentId String?       @unique
+  createdAt             DateTime      @default(now())
+
+  @@index([groomerId, startTs])
 }

@@ -36,7 +36,7 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       // When you manually capture and the charge settles, Stripe emits succeeded
       case 'payment_intent.succeeded': {
         const pi = event.data.object; // PaymentIntent
-        await prisma.booking.updateMany({
+        await prisma.booking.update({
           where: { stripePaymentIntentId: pi.id },
           data: { status: 'completed' },
         });
@@ -46,7 +46,7 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       // If a PaymentIntent is canceled (e.g., you decline or it times out)
       case 'payment_intent.canceled': {
         const pi = event.data.object;
-        await prisma.booking.updateMany({
+        await prisma.booking.update({
           where: { stripePaymentIntentId: pi.id },
           data: { status: 'canceled' },
         });
@@ -56,7 +56,7 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       // If confirmation/capture fails for any reason
       case 'payment_intent.payment_failed': {
         const pi = event.data.object;
-        await prisma.booking.updateMany({
+        await prisma.booking.update({
           where: { stripePaymentIntentId: pi.id },
           data: { status: 'declined' },
         });
@@ -84,3 +84,4 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
 });
 
 module.exports = router;
+
