@@ -23,6 +23,8 @@ app.get('/', (req, res) => res.json({ ok: true }));
 app.use('/bookings', auth, require('./create booking and paymentIntent')); // POST /
 app.use('/bookings', auth, require('./groomer accept(capture payment)'));  // PATCH /:id/status
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API listening on :${port}`));
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API listening on http://0.0.0.0:${PORT}`);
+});
 

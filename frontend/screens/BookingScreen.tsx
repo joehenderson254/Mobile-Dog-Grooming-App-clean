@@ -1,88 +1,199 @@
-import React, { useState } from 'react';
-import { View, Text, Button, Alert, ActivityIndicator } from 'react-native';
-import { CardField, useConfirmPayment } from '@stripe/stripe-react-native';
-import { API_BASE } from '../constants';
+import React, { useState } from "react";
+import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView } from "react-native";
+import { CardField, useStripe } from "@stripe/stripe-react-native";
+import { API_BASE, AUTH_TOKEN } from "../constants";
 
-const TOKEN = 'PASTE_YOUR_JWT_HERE'; // use the one you generated
+type Props = {
+  route: { params: { groomerId: string } };
+  navigation: any;
+};
 
-export default function BookingScreen({ route }: any) {
-  const { confirmPayment, loading } = useConfirmPayment();
+export default function BookingScreen({ route, navigation }: Props) {
+  const { groomerId } = route.params || {};
+  const { confirmPayment } = useStripe();
+
+  const [serviceId, setServiceId] = useState<string>("");
+  const [startTs, setStartTs] = useState<string>(new Date(Date.now() + 60 * 60 * 1000).toISOString()); // +1h
+  const [address, setAddress] = useState<string>("123 Demo St, San Francisco, CA");
+  const [lat, setLat] = useState<string>("37.78");
+  const [lng, setLng] = useState<string>("-122.41");
   const [cardComplete, setCardComplete] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // You could pass these via route.params from Search → Groomer → Booking.
-  // For now, demo hardcodes (swap with your real IDs if needed).
-  const customerId = 'demo-customer';
-  const groomerId  = route?.params?.groomerId ?? 'cmfh8o3lh0002oei97z3xtdgj';
-  const serviceId  = route?.params?.serviceId ?? 'cmfh8o3ll0004oei99ucvj5n4';
-  const startTs    = '2025-09-25T18:00:00.000Z';
-  const address    = '123 Demo St';
-  const lat        = 37.78;
-  const lng        = -122.41;
-
-  const onPay = async () => {
+  async function handleBookAndPay() {
     try {
-      // 1) Create booking to get clientSecret
-      const resp = await fetch(`${API_BASE}/bookings`, {
-        method: 'POST',
+      if (!groomerId) return Alert.alert("Missing groomer", "No groomerId provided.");
+      if (!serviceId) return Alert.alert("Missing service", "Please enter a serviceId.");
+      if (!startTs) return Alert.alert("Missing time", "Please enter a startTs (ISO).");
+      if (!cardComplete) return Alert.alert("Card details", "Please enter complete card details.");
+
+      setLoading(true);
+
+      // 1) Create booking + PaymentIntent (manual capture on backend)
+      const createUrl = `${API_BASE}/bookings`;
+      const payload = {
+        customerId: "demo-user",
+        groomerId,
+        serviceId,
+        startTs,
+        address,
+        lat: Number(lat),
+        lng: Number(lng),
+      };
+
+      console.log("POST", createUrl, payload);
+
+      const createRes = await fetch(createUrl, {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${AUTH_TOKEN}`,
         },
-        body: JSON.stringify({
-          customerId, groomerId, serviceId,
-          startTs, address, lat, lng,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `Backend error (${resp.status})`);
-      }
-      const { bookingId, clientSecret } = await resp.json();
+      console.log("Create status:", createRes.status);
+      const createJson = await createRes.json().catch(() => ({} as any));
+      console.log("Create response:", createJson);
 
-      // 2) Confirm on device (manual capture)
+      if (!createRes.ok || !createJson?.clientSecret || !createJson?.bookingId) {
+        throw new Error(`Create booking failed (${createRes.status})`);
+      }
+
+      const { clientSecret, bookingId } = createJson;
+
+      // 2) Confirm payment — CardField supplies card details
+      console.log("Confirming clientSecret:", clientSecret);
       const { error, paymentIntent } = await confirmPayment(clientSecret, {
-        paymentMethodType: 'Card',
+        paymentMethodType: "Card",
+        paymentMethodData: {
+          // Optional billing details for test:
+          billingDetails: { email: "demo@example.com" },
+        },
       });
 
       if (error) {
-        Alert.alert('Payment failed', error.message);
+        console.log("confirmPayment error:", error);
+        Alert.alert("Payment error", error.message || "Payment failed");
         return;
       }
 
-      // 3) (Demo) Immediately capture (groomer portal would do this in real life)
-      const accept = await fetch(`${API_BASE}/bookings/${bookingId}/status`, {
-        method: 'PATCH',
+      console.log("PaymentIntent:", paymentIntent);
+
+      // 3) (Demo) Accept/capture immediately
+      const patchUrl = `${API_BASE}/bookings/${bookingId}/status`;
+      console.log("PATCH", patchUrl, { action: "accept" });
+
+      const patchRes = await fetch(patchUrl, {
+        method: "PATCH",
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${AUTH_TOKEN}`,
         },
-        body: JSON.stringify({ action: 'accept' }),
+        body: JSON.stringify({ action: "accept" }),
       });
 
-      if (!accept.ok) {
-        const e = await accept.json().catch(() => ({}));
-        throw new Error(e.error || `Accept failed (${accept.status})`);
-      }
+      console.log("Accept status:", patchRes.status);
+      const patchJson = await patchRes.json().catch(() => ({} as any));
+      console.log("Accept response:", patchJson);
 
-      Alert.alert('Success', `Booking confirmed! PI: ${paymentIntent?.id}\nStatus will flip to completed via webhook.`);
-      // navigation.navigate('BookingConfirmed', { bookingId });
+      if (!patchRes.ok) throw new Error(`Accept failed (${patchRes.status})`);
+
+      Alert.alert("Success", "Booking confirmed and payment captured!");
+      navigation.goBack();
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Unknown error');
+      console.log("Booking flow error:", e?.message || e);
+      Alert.alert("Error", e?.message || "Something went wrong");
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <View style={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 20, fontWeight: '600' }}>Enter card</Text>
-      <CardField
-        postalCodeEnabled={false}
-        onCardChange={(d) => setCardComplete(!!d.complete)}
-        style={{ height: 48 }}
+    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+      <Text style={{ fontSize: 16, fontWeight: "600" }}>Groomer:</Text>
+      <Text selectable>{groomerId ?? "(none)"}</Text>
+
+      <Text style={{ marginTop: 8 }}>Service ID</Text>
+      <TextInput
+        value={serviceId}
+        onChangeText={setServiceId}
+        placeholder="Enter a serviceId (from seed/Prisma Studio)"
+        style={{ borderWidth: 1, borderRadius: 8, padding: 12 }}
       />
-      <Button title={loading ? 'Processing…' : 'Book & Pay'} onPress={onPay} disabled={!cardComplete || loading} />
-      {loading && <ActivityIndicator />}
-    </View>
+
+      <Text style={{ marginTop: 8 }}>Start Time (ISO)</Text>
+      <TextInput
+        value={startTs}
+        onChangeText={setStartTs}
+        placeholder="YYYY-MM-DDTHH:MM:SS.sssZ"
+        style={{ borderWidth: 1, borderRadius: 8, padding: 12 }}
+        autoCapitalize="none"
+      />
+
+      <Text style={{ marginTop: 8 }}>Address</Text>
+      <TextInput
+        value={address}
+        onChangeText={setAddress}
+        placeholder="Service address"
+        style={{ borderWidth: 1, borderRadius: 8, padding: 12 }}
+      />
+
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ marginTop: 8 }}>Lat</Text>
+          <TextInput
+            value={lat}
+            onChangeText={setLat}
+            placeholder="37.78"
+            style={{ borderWidth: 1, borderRadius: 8, padding: 12 }}
+            keyboardType="numbers-and-punctuation"
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ marginTop: 8 }}>Lng</Text>
+          <TextInput
+            value={lng}
+            onChangeText={setLng}
+            placeholder="-122.41"
+            style={{ borderWidth: 1, borderRadius: 8, padding: 12 }}
+            keyboardType="numbers-and-punctuation"
+          />
+        </View>
+      </View>
+
+      {/* Stripe Card Field */}
+      <Text style={{ marginTop: 8, fontWeight: "600" }}>Card</Text>
+      <CardField
+        postalCodeEnabled={true}
+        placeholders={{ number: "4242 4242 4242 4242" }}
+        onCardChange={(card) => {
+          setCardComplete(card?.complete ?? false);
+          console.log("Card changed:", card?.complete, card?.last4);
+        }}
+        style={{ width: "100%", height: 48, marginTop: 8 }}
+      />
+
+      <TouchableOpacity
+        onPress={handleBookAndPay}
+        style={{
+          marginTop: 16,
+          padding: 16,
+          borderWidth: 1,
+          borderRadius: 10,
+          alignItems: "center",
+          opacity: loading || !cardComplete ? 0.6 : 1,
+        }}
+        disabled={loading || !cardComplete}
+      >
+        <Text>{loading ? "Processing…" : "Book & Pay (test card 4242)"}</Text>
+      </TouchableOpacity>
+
+      <Text style={{ marginTop: 12, color: "#666" }}>
+        Tip: Use Stripe test card <Text style={{ fontWeight: "600" }}>4242 4242 4242 4242</Text>, any
+        future expiry, any CVC & ZIP.
+      </Text>
+    </ScrollView>
   );
 }
 
