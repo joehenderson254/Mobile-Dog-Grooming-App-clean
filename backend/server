@@ -1,24 +1,28 @@
-// backend/server.js
-const express = require('express');
-const dotenv = require('dotenv');
-dotenv.config();
+// backend/server
+require('dotenv').config();
 
+const express = require('express');
 const app = express();
 
-// 🔔 Mount the Stripe webhook BEFORE JSON parsers
-const stripeWebhookRouter = require('./stripeWebhook'); // you'll export a router from that file
+// auth middleware (protect bookings)
+const auth = require('./src/middleware/auth');
+
+// 👉 Mount Stripe webhook BEFORE JSON parsers (needs raw body)
+const stripeWebhookRouter = require('./stripeWebhook');
 app.use('/stripe/webhook', stripeWebhookRouter);
 
 // Normal parsers for everything else
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Mount your other routers (see section B to export them correctly)
-app.use('/bookings', require('./create booking and paymentIntent'));       // POST /
-app.use('/bookings', require('./groomer accept(capture payment)'));        // PATCH /:id/status
-app.use('/',        require('./search nearby groomers'));                  // GET /groomers?lat=...&lng=...
-
+// Public routes
+app.use('/', require('./search nearby groomers')); // GET /groomers, /groomers/:id/slots
 app.get('/', (req, res) => res.json({ ok: true }));
+
+// Protected routes (require Bearer JWT)
+app.use('/bookings', auth, require('./create booking and paymentIntent')); // POST /
+app.use('/bookings', auth, require('./groomer accept(capture payment)'));  // PATCH /:id/status
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`API listening on :${port}`));
+
